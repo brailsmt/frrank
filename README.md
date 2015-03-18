@@ -5,7 +5,7 @@ provide teams a way to view and compare their performance with those of others t
 
 ## Why the silly name?
 
-FRRank is derived from the words 'First', 'Robotics', and 'Rank':  F.R.Rank or just frrank.
+FRRank is derived from the words 'FIRST', 'Robotics', and 'Rank':  F.R.Rank or just frrank.
 
 ## License
 
