@@ -2,6 +2,8 @@
   (:require 
     [clojure.string :as str]
     [clj-http.client :as client]
+    [clj-time.core :as dt]
+    [clj-time.format :as dtfmt]
     [compojure.route :as route]
     [clojure.java.jdbc :as jdbc]
     [clojure.pprint :as pp]
@@ -16,61 +18,40 @@
 (def prod-server  "https://frc-api.usfirst.org")
 (def auth-token "Basic YnJhaWxzbXQ6QTA2RjlERDAtNTI4OC00OTBGLUJFMDktQjM2MzRDMjlBOTJDCg==")
 
-(def mysql-db {:subprotocol "mysql"
-               :subname "//127.0.0.1:3306/frrank"
-               :user "frrank"
-               :password "frrank"})
+(def db-spec {:classname "com.mysql.jdbc.Driver"
+              :subprotocol "mysql"
+              :subname "//127.0.0.1:3306/frrank"
+              :user "root"})
 
-(defn create-season-tbl
-  "Create the season table"
-  []
-  (jdbc/create-table
-    :season
-    [:year :integer "primary key"]
-    [:frcChampionship :datetime]
-    [:eventCount :integer]
-    [:gameName "varchar(128)"]
-    [:kickoff :datetime]
-    [:rookieStart :integer]
-    [:teamCount :integer]))
+(defn- parse-json [json] (parse-string json #(keyword (str/lower-case %))))
 
-(defn create-teams-tbl
-  "Create the teams table"
-  []
-  (jdbc/create-table
-    :teams
-    [:teamNumber :integer "primary key"]
-    [:rookieYear :integer]
-    [:stateProv "varchar(10)"]
-    [:robotName "varchar(256)"]
-    [:city "varchar(50)"]
-    [:nameFull "varchar(1024)"]
-    [:nameShort "varchar(256)"]
-    [:districtCode "varchar(16)"]
-    [:country "varchar(32)"]))
+(def current-year (.getYear (org.joda.time.DateTime.)))
 
-(defn create-database
-  [dbconn]
-  (jdbc/with-connection dbconn (jdbc/transaction 
-      (create-season-tbl)
-      (create-teams-tbl)
-      )))
-
-
-(defn- parse-json [json] (parse-string json (fn [k] (keyword k))))
-(def year-info 
-  (let [response (client/get (build-url staging-server api-root "2015") {:headers { :authorization auth-token }})]
-        (assoc (parse-json (:body response)) :full response)))
+(defn get-or-load-season-info
+  "Queries the frrank database for season information, or queries it from FIRST and populates the table"
+  [] ; parameterize this with year
+  (if-let [data-from-dbms (seq (jdbc/query db-spec ["select * from season where year = ?" current-year]))]
+    (first data-from-dbms)
+    (let [{:keys [body]}                                  (client/get (build-url staging-server api-root "2015") {:headers { :authorization auth-token }})
+          {:keys [kickoff frcchampionship] :as year-info} (parse-json body)
+          kickoffdt (dtfmt/parse (dtfmt/formatters :date-time-no-ms) kickoff)
+          champdt   (dtfmt/parse (dtfmt/formatters :date-hour-minute-second) frcchampionship)
+          season-rec (assoc year-info 
+                            :year (.getYear kickoffdt)
+                            :kickoff (dtfmt/unparse (dtfmt/formatters :mysql) kickoffdt)
+                            :frcchampionship (dtfmt/unparse (dtfmt/formatters :mysql) champdt))]
+      (jdbc/insert! db-spec :season season-rec)
+      season-rec)))
 
 (def team-listing (atom {}))
 
-(defn team-list
-  [server year]
-  (let [page-range (map inc (range (/ (:teamCount year-info) 50)))
-        base-url (str (build-url server api-root "teams" year) "?page=")
-        tlist []
-        full-list (flatten (map #(cons tlist (:teams (parse-json (:body (client/get (str base-url %) {:debug true :headers { :authorization auth-token }}))))) page-range))]
-    (swap! (map 
+;(defn team-list
+;  [server year]
+;  (let [page-range (map inc (range (/ (:teamCount year-info) 50)))
+;        base-url (str (build-url server api-root "teams" year) "?page=")
+;        tlist []
+;        full-list (flatten (map #(cons tlist (:teams (parse-json (:body (client/get (str base-url %) {:debug true :headers { :authorization auth-token }}))))) page-range))]
+;    (swap! (map 
 
 ;
 ;(defn team-ranking 
